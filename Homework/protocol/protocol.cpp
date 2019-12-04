@@ -1,13 +1,16 @@
 #include "rip.h"
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <iostream>
+using namespace std;
 
 /*
   在头文件 rip.h 中定义了如下的结构体：
   #define RIP_MAX_ENTRY 25
   typedef struct {
     // all fields are big endian
-    // we don't store 'family', as it is always 2(for response) and 0(for request)
+    // we don't store 'family', as it is always 2(response) and 0(request)
     // we don't store 'tag', as it is always 0
     uint32_t addr;
     uint32_t mask;
@@ -39,14 +42,76 @@
  * IP 包的 Total Length 长度可能和 len 不同，当 Total Length 大于 len 时，把传入的 IP 包视为不合法。
  * 你不需要校验 IP 头和 UDP 的校验和是否合法。
  * 你需要检查 Command 是否为 1 或 2，Version 是否为 2， Zero 是否为 0，
- * Family 和 Command 是否有正确的对应关系（见上面结构体注释），Tag 是否为 0，
+ * Family 和 Command 是否有正确的对应关系，Tag 是否为 0，
  * Metric 转换成小端序后是否在 [1,16] 的区间内，
  * Mask 的二进制是不是连续的 1 与连续的 0 组成等等。
  */
+
+
+
 bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output) {
   // TODO:
-  return false;
+    //Total length
+    if((((int)packet[2])<<8)+packet[3]>len)
+        return false;
+    //command
+    uint8_t command=packet[28];
+    if(command!=0x01 && command!=0x02)
+        return false;
+    //version
+    if(packet[29]!=0x02)
+        return false;
+    //zero
+    if((((uint16_t)packet[30])<<8)+packet[31]!=0x0000)
+        return false;
+    output->numEntries=0;
+    output->command=command;
+    int entry_start=((packet[0]&0xf)<<2)+12;
+    for(int i=entry_start; i<len;  i+=20){
+         //family
+        uint16_t family=((int)packet[i]<<8)+packet[1+i];
+        if(command==0x01){
+            if(family!=0x0000) return false;
+        }
+        else{
+            if(family!=0x0002) return false;
+        }
+        //Metric
+        uint32_t metric=((int)packet[16+i]<<24)+((int)packet[17+i]<<16)+((int)packet[18+i]<<8)+packet[19+i];
+        if(metric<1 || metric>16) return false;
+        //Mask
+        uint32_t mask=((int)packet[8+i]<<24)+((int)packet[9+i]<<16)+((int)packet[10+i]<<8)+packet[11+i];
+        int cnt=0;
+        uint8_t current;
+        uint8_t forward;
+        uint8_t first=mask & 0x1;
+        forward=mask & 0x1;
+        for(int i=1; i<32; i++){
+            mask=mask>>1;
+            current=mask & 0x1;
+            if(current != forward){
+                cnt++;
+            }
+            forward=current;
+        }
+        if(cnt>1)  return false;
+        if(first==0x1 && cnt >0) return false;
+        
+        //赋值
+        output->entries[output->numEntries].addr=((int)packet[7+i]<<24)+((int)packet[6+i]<<16)+((int)packet[5+i]<<8)+packet[4+i];
+        output->entries[output->numEntries].mask=((int)packet[11+i]<<24)+((int)packet[10+i]<<16)+((int)packet[9+i]<<8)+packet[8+i];
+        output->entries[output->numEntries].metric=((int)packet[19+i]<<24)+((int)packet[18+i]<<16)+((int)packet[17+i]<<8)+packet[16+i];
+        output->entries[output->numEntries].nexthop=((int)packet[15+i]<<24)+((int)packet[14+i]<<16)+((int)packet[13+i]<<8)+packet[12+i];
+        output->numEntries++;
+    }
+   return true;
 }
+
+    
+
+
+
+
 
 /**
  * @brief 从 RipPacket 的数据结构构造出 RIP 协议的二进制格式
@@ -60,5 +125,43 @@ bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output) {
  */
 uint32_t assemble(const RipPacket *rip, uint8_t *buffer) {
   // TODO:
-  return 0;
+    buffer[0]=rip->command;
+    buffer[1]=0x02;
+    buffer[2]=0x00;
+    buffer[3]=0x00;
+    
+    for(int i=0; i<rip->numEntries; i++){
+        int j=20*i+4;
+        RipEntry entry=rip->entries[i];
+        //family
+        buffer[j]=0x00;
+        if(rip->command==0x02) buffer[j+1]=0x02;
+        else buffer[j+1]=0x00;
+        //Router Tag
+        buffer[j+2]=0x00;
+        buffer[j+3]=0x00;
+        //ip address
+        buffer[j+4]=entry.addr;
+        buffer[j+5]=entry.addr>>8;
+        buffer[j+6]=entry.addr>>16;
+        buffer[j+7]=entry.addr>>24;
+        //mask
+        buffer[j+8]=entry.mask;
+        buffer[j+9]=entry.mask>>8;
+        buffer[j+10]=entry.mask>>16;
+        buffer[j+11]=entry.mask>>24;
+        //nexthop
+        buffer[j+12]=entry.nexthop;
+        buffer[j+13]=entry.nexthop>>8;
+        buffer[j+14]=entry.nexthop>>16;
+        buffer[j+15]=entry.nexthop>>24;
+        //metric
+        buffer[j+16]=entry.metric;
+        buffer[j+17]=entry.metric>>8;
+        buffer[j+18]=entry.metric>>16;
+        buffer[j+19]=entry.metric>>24;
+    }
+    
+    return (rip->numEntries)*20+4;
+;
 }
