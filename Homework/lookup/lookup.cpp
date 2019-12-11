@@ -1,7 +1,7 @@
 #include "router.h"
 #include <stdint.h>
 #include <stdlib.h>
-#include<vector>
+#include <vector>
 #include <string>
 #include <iostream>
 #include <sstream>
@@ -32,31 +32,42 @@ using namespace std;
  * 删除时按照 addr 和 len 匹配。
  */
 vector<RoutingTableEntry> RouterTable;
-
-void update(bool insert, RoutingTableEntry entry) {
+std::vector<RoutingTableEntry> getRouterTable()
+{
+  return RouterTable;
+}
+void update(bool insert, RoutingTableEntry entry)
+{
   // TODO:
-    if(insert){
-        int flag=false;
-        for(int i=0; i<RouterTable.size(); i++){
-            if(RouterTable.at(i).addr==entry.addr && RouterTable.at(i).len==entry.len){
-                RouterTable.at(i).nexthop=entry.nexthop;
-                RouterTable.at(i).if_index=entry.if_index;
-                flag=true;
-                break;
-            }
-        }
-        if(!flag){
-            RouterTable.push_back(entry);
-        }
+  if (insert)
+  {
+    int flag = false;
+    for (int i = 0; i < RouterTable.size(); i++)
+    {
+      if (RouterTable.at(i).addr == entry.addr && RouterTable.at(i).len == entry.len)
+      {
+        RouterTable.at(i).nexthop = entry.nexthop;
+        RouterTable.at(i).if_index = entry.if_index;
+        flag = true;
+        break;
+      }
     }
-    else{
-        for(int i=0; i<RouterTable.size(); i++){
-            if(RouterTable.at(i).addr==entry.addr && RouterTable.at(i).len==entry.len){
-                RouterTable.erase(RouterTable.begin()+i);
-                break;
-            }
-        }
+    if (!flag)
+    {
+      RouterTable.push_back(entry);
     }
+  }
+  else
+  {
+    for (int i = 0; i < RouterTable.size(); i++)
+    {
+      if (RouterTable.at(i).addr == entry.addr && RouterTable.at(i).len == entry.len)
+      {
+        RouterTable.erase(RouterTable.begin() + i);
+        break;
+      }
+    }
+  }
 }
 
 /**
@@ -66,30 +77,35 @@ void update(bool insert, RoutingTableEntry entry) {
  * @param if_index 如果查询到目标，把表项的 if_index 写入
  * @return 查到则返回 true ，没查到则返回 false
  */
-string tohex(uint32_t addr){
-    int temp=(int) addr;
-    stringstream ss;
-    ss<<hex<<temp;
-    return ss.str();
+string tohex(uint32_t addr)
+{
+  int temp = (int)addr;
+  stringstream ss;
+  ss << hex << temp;
+  return ss.str();
 }
 
-bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
-    // TODO:
-    string addr_hex=tohex(addr);
-    int max_prefix=-1;
-    int max=-1;
-    for(int i=0; i<RouterTable.size(); i++){
-        string entry_addr_hex=tohex(RouterTable.at(i).addr);
-        if(addr_hex.find(entry_addr_hex)!=-1 && (int)entry_addr_hex.size()>max_prefix){
-            max_prefix=entry_addr_hex.length();
-            max=i;
-        }
+bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index)
+{
+  // TODO:
+  string addr_hex = tohex(addr);
+  int max_prefix = -1;
+  int max = -1;
+  for (int i = 0; i < RouterTable.size(); i++)
+  {
+    string entry_addr_hex = tohex(RouterTable.at(i).addr);
+    if (addr_hex.find(entry_addr_hex) != -1 && (int)entry_addr_hex.size() > max_prefix)
+    {
+      max_prefix = entry_addr_hex.length();
+      max = i;
     }
-    if(max==-1)
-        return false;
-    else{
-        *nexthop=RouterTable.at(max).nexthop;
-        *if_index=RouterTable.at(max).if_index;
-        return true;
-    }
+  }
+  if (max == -1)
+    return false;
+  else
+  {
+    *nexthop = RouterTable.at(max).nexthop;
+    *if_index = RouterTable.at(max).if_index;
+    return true;
+  }
 }
