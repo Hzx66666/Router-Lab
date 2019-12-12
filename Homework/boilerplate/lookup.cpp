@@ -61,7 +61,7 @@ void update(bool insert, RoutingTableEntry entry)
   {
     for (int i = 0; i < RouterTable.size(); i++)
     {
-      if (RouterTable.at(i).addr == entry.addr && RouterTable.at(i).len == entry.len)
+      if (RouterTable.at(i).addr == entry.addr && RouterTable.at(i).len == entry.len && RouterTable.at(i).nexthop == entry.nexthop)
       {
         RouterTable.erase(RouterTable.begin() + i);
         break;

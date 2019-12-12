@@ -7,17 +7,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include <iostream>
+using namespace std;
 
 extern bool validateIPChecksum(uint8_t *packet, size_t len);
 extern void update(bool insert, RoutingTableEntry entry);
 extern bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index);
 extern bool forward(uint8_t *packet, size_t len);
 extern bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output);
-extern uint32_t assemble(const RipPacket *rip, uint8_t *buffer, bool split, in_addr_t dst_addr);
+extern uint32_t assemble(const RipPacket *rip, uint8_t *buffer, uint32_t if_index);
 extern std::vector<RoutingTableEntry> getRouterTable();
 
 RipPacket ripTable;
-macaddr_t multicast_mac = {0x01, 0x00, 0x5e, 0x00, 0x00, 0x16}; // 01:00:5e:00:00:09
+macaddr_t multicast_mac = {0x01, 0x00, 0x5e, 0x00, 0x00, 0x09}; // 01:00:5e:00:00:09
 in_addr_t multicast_addr = 0x090000e0;                          // 224.0.0.9
 uint8_t packet[2048];
 uint8_t output[2048];
@@ -47,7 +49,15 @@ unsigned short getCheckSum(uint8_t output[2048], int hLength)
   unsigned short answer = ~sum;
   return answer;
 }
-uint32_t sendIPPacket(uint8_t output[2048], in_addr_t src_addr, in_addr_t dst_addr, bool split)
+void mp(uint32_t dst_addr)
+{
+  uint8_t a = dst_addr;
+  uint8_t b = dst_addr >> 8;
+  uint8_t c = dst_addr >> 16;
+  uint8_t d = dst_addr >> 24;
+  cout << (uint32_t)a << "." << (uint32_t)b << "." << (uint32_t)c << "." << (uint32_t)d;
+}
+uint32_t sendIPPacket(uint8_t output[2048], in_addr_t src_addr, in_addr_t dst_addr, int if_index)
 {
   // IP
   output[0] = 0x45;
@@ -81,7 +91,7 @@ uint32_t sendIPPacket(uint8_t output[2048], in_addr_t src_addr, in_addr_t dst_ad
   output[18] = dst_addr >> 16;
   output[19] = dst_addr >> 24;
 
-  uint32_t rip_len = assemble(&ripTable, &output[20 + 8], split, dst_addr);
+  uint32_t rip_len = assemble(&ripTable, &output[20 + 8], if_index);
 
   // Total Length
   output[2] = (rip_len + 20 + 8) >> 8;
@@ -144,7 +154,7 @@ uint32_t toEndian(uint32_t num)
   uint32_t tmp = 0;
   for (uint32_t i = 0; i < num; i++)
   {
-    tmp = tmp << 1 + 1;
+    tmp = (tmp << 1) + 1;
   }
   return tmp << (32 - num);
 }
@@ -175,13 +185,11 @@ void updateRIPtable()
   for (int i = 0; i < ripTable.numEntries; i++)
   {
     RipEntry entry;
-    entry.addr = routertable[i].addr;
-    entry.nexthop = routertable[i].nexthop;
     entry.mask = changeEndian_uint32t(toEndian(routertable[i].len));
-    printf("! %d\n", routertable[i].len);
-    printf("! %d\n", toEndian(routertable[i].len));
-    printf("! %d\n", entry.mask);
+    entry.addr = routertable[i].addr & entry.mask;
+    entry.nexthop = routertable[i].nexthop;
     entry.metric = changeEndian_uint32t(routertable[i].metric);
+    entry.if_index = routertable[i].if_index;
     ripTable.entries[i] = entry;
   }
 }
@@ -204,10 +212,10 @@ int main(int argc, char *argv[])
   for (uint32_t i = 0; i < N_IFACE_ON_BOARD; i++)
   {
     RoutingTableEntry entry = {
-        .addr = addrs[i], // big endian
-        .len = 24,        // small endian
-        .if_index = i,    // small endian
-        .nexthop = 0,     // big endian, means direct
+        .addr = addrs[i] & changeEndian_uint32t(toEndian(24)), // big endian
+        .len = 24,                                             // small endian
+        .if_index = i,                                         // small endian
+        .nexthop = 0,                                          // big endian, means direct
         .metric = 1};
     update(true, entry);
   }
@@ -222,7 +230,7 @@ int main(int argc, char *argv[])
       for (int i = 0; i < N_IFACE_ON_BOARD; i++)
       {
         updateRIPtable();
-        uint32_t rip_len = sendIPPacket(output, addrs[i], multicast_addr, false);
+        uint32_t rip_len = sendIPPacket(output, addrs[i], multicast_addr, i);
         HAL_SendIPPacket(i, output, rip_len + 20 + 8, multicast_mac);
       }
       printf("Timer\n");
@@ -235,7 +243,7 @@ int main(int argc, char *argv[])
     int if_index;
     res = HAL_ReceiveIPPacket(mask, packet, sizeof(packet), src_mac,
                               dst_mac, 1000, &if_index);
-    printf("hhhh %d\n", res);
+    //cout << "^^^" << res << endl;
     if (res == HAL_ERR_EOF)
     {
       break;
@@ -280,8 +288,8 @@ int main(int argc, char *argv[])
     // big endian
     memcpy(&dst_addr, &packet[16], sizeof(in_addr_t));
     memcpy(&src_addr, &packet[12], sizeof(in_addr_t));
-    src_addr = changeEndian_uint32t(src_addr);
-    dst_addr = changeEndian_uint32t(dst_addr);
+    //src_addr = changeEndian_uint32t(src_addr);
+    //dst_addr = changeEndian_uint32t(dst_addr);
     bool dst_is_me = false;
     for (int i = 0; i < N_IFACE_ON_BOARD; i++)
     {
@@ -297,13 +305,16 @@ int main(int argc, char *argv[])
     {
       dst_is_me = true;
     }
+    //printf("dst_addr: %X\n", dst_addr);
+    cout << dst_is_me << endl;
     if (dst_is_me)
     {
       // TODO: RIP?
-
+      //cout << "dst is me!!" << endl;
       RipPacket rip;
       if (disassemble(packet, res, &rip))
       { //3a.1
+        cout << "receive packet!!" << endl;
         if (rip.command == 1)
         { //3a.3
           // request
@@ -313,7 +324,7 @@ int main(int argc, char *argv[])
 
           // TODO: fill resp
           // assemble
-          uint32_t rip_len = sendIPPacket(output, src_addr, dst_addr, true);
+          uint32_t rip_len = sendIPPacket(output, src_addr, dst_addr, if_index);
           // ...
           // RIP
           // checksum calculation for ip and udp
@@ -325,6 +336,7 @@ int main(int argc, char *argv[])
         { //3a.2
           // response
           // TODO: use query and update
+          cout << "enter response" << endl;
           /*
           RipPacket invalid_rip;
           invalid_rip.command = 2;
@@ -336,16 +348,25 @@ int main(int argc, char *argv[])
           for (uint32_t i = 0; i < rip.numEntries; i++)
           {
             RipEntry entry = rip.entries[i];
+            entry.metric = changeEndian_uint32t(entry.metric);
+
             if (entry.metric + 1 > 16)
             {
-              //删除路由
-              RoutingTableEntry router;
-              router.addr = entry.addr;
-              router.len = toInt(changeEndian_uint32t(entry.metric));
-              update(false, router);
-              entry.metric++;
-              //invalid_rip.entries[invalid_rip.numEntries] = entry;
-              //invalid_rip.numEntries++;
+              if (src_addr != 0x0103a8c0 // reverse poisoning detection
+                  && src_addr != 0x0204a8c0)
+              {
+                //删除路由
+                RoutingTableEntry router;
+                router.addr = entry.addr;
+                router.len = toInt(entry.metric);
+                router.nexthop = entry.nexthop;
+                cout << "delete**********************************" << endl;
+                mp(router.addr);
+                update(false, router);
+                entry.metric++;
+                //invalid_rip.entries[invalid_rip.numEntries] = entry;
+                //invalid_rip.numEntries++;
+              }
             }
             else
             {
@@ -355,16 +376,20 @@ int main(int argc, char *argv[])
               {
                 if (entry.addr == ripTable.entries[i].addr && entry.mask == ripTable.entries[i].mask)
                 {
-                  if ((entry.metric + 1) <= ripTable.entries[i].metric)
+                  cout << "~~~~~~~~~~~~" << changeEndian_uint32t(ripTable.entries[i].metric) << endl;
+                  if ((entry.metric + 1) <= changeEndian_uint32t(ripTable.entries[i].metric))
                   {
                     entry.metric++;
                     find = true;
                     RoutingTableEntry router;
                     router.addr = entry.addr;
-                    router.len = toInt(changeEndian_uint32t(entry.metric));
+                    router.len = toInt(entry.metric);
                     router.if_index = if_index;
                     router.nexthop = src_addr;
+                    mp(router.addr);
+                    cout << "updat**********************************" << endl;
                     router.metric = entry.metric;
+                    cout << entry.metric << "&&&&" << endl;
                     update(true, router);
                     //添加更新rip报文
                     //update_rip.entries[update_rip.numEntries] = entry;
@@ -377,10 +402,15 @@ int main(int argc, char *argv[])
                 entry.metric++;
                 RoutingTableEntry router;
                 router.addr = entry.addr;
-                router.len = toInt(changeEndian_uint32t(entry.metric));
+                router.len = toInt(entry.metric);
+
                 router.if_index = if_index;
                 router.nexthop = src_addr;
+                cout << "add**********************************" << endl;
+                mp(router.addr);
                 router.metric = entry.metric;
+                cout << entry.metric << "&&&&" << endl;
+
                 update(true, router);
                 //添加更新rip报文
                 //update_rip.entries[update_rip.numEntries] = entry;
@@ -388,73 +418,96 @@ int main(int argc, char *argv[])
               }
             }
           }
+          cout << "------------------------------------------------------" << endl;
+          vector<RoutingTableEntry> router = getRouterTable();
+          for (RoutingTableEntry e : router)
+          {
+            cout << "route.addr:";
+            mp(e.addr);
+            cout << "/" << e.len;
+            cout << "    route.metric:" << e.metric;
+            cout << "    route.if_index:" << e.if_index;
+            cout << "    route.nexthop:";
+            mp(e.nexthop);
+            cout << endl;
+          }
+          cout << "------------------------------------------------------" << endl;
         }
       }
-      else
+    }
+    else
+    {
+      // 3b.1 dst is not me
+      // forward
+      // beware of endianness
+      //printf("for.ip: %X\n", src_addr);
+      //printf("forward.ip: %X\n", dst_addr);
+      uint32_t nexthop, dest_if;
+      if (query(dst_addr, &nexthop, &dest_if))
       {
-        // forward
-        // beware of endianness
-        uint32_t nexthop, dest_if;
-        if (query(src_addr, &nexthop, &dest_if))
+        // found
+
+        macaddr_t dest_mac;
+        // direct routing
+        if (nexthop == 0)
+        {
+          nexthop = dst_addr;
+        }
+        if (HAL_ArpGetMacAddress(dest_if, nexthop, dest_mac) == 0)
         {
           // found
-          macaddr_t dest_mac;
-          // direct routing
-          if (nexthop == 0)
+          memcpy(output, packet, res);
+          // update ttl and checksum
+          forward(output, res);
+          // TODO: you might want to check ttl=0 case
+          // 当TTL=0， 建议构造一个 ICMP Time Exceeded 返回给发送者
+          if (output[8] == 0x00)
           {
-            nexthop = dst_addr;
-          }
-          if (HAL_ArpGetMacAddress(dest_if, nexthop, dest_mac) == 0)
-          {
-            // found
-            memcpy(output, packet, res);
-            // update ttl and checksum
-            forward(output, res);
-            // TODO: you might want to check ttl=0 case
-            if (output[8] == 0x00)
-            {
-              // ICMP type
-              output[0] = 0x0b;
-              // ICMP code
-              output[1] = 0x00;
+            // ICMP type
+            output[0] = 0x0b;
+            // ICMP code
+            output[1] = 0x00;
 
-              setupICMPPacket(output, packet);
+            setupICMPPacket(output, packet);
 
-              // calculate checksum
-              unsigned short answer = getCheckSum(output, 36);
-              output[2] = answer >> 8;
-              output[3] = answer;
-              HAL_SendIPPacket(if_index, output, 36, src_mac); // 36 is the length of a ICMP packet: 8(head of icmp) + 28(ip head + first 8 bytes of ip data)
-              printf("IP TTL timeout for %x\n", src_addr);
-            }
-            else
-            {
-              HAL_SendIPPacket(dest_if, output, res, dest_mac);
-            }
+            // calculate checksum
+            unsigned short answer = getCheckSum(output, 36);
+            output[2] = answer >> 8;
+            output[3] = answer;
+            HAL_SendIPPacket(if_index, output, 36, src_mac); // 36 is the length of a ICMP packet: 8(head of icmp) + 28(ip head + first 8 bytes of ip data)
+
+            printf("IP TTL timeout for %x\n", src_addr);
           }
           else
           {
-            // not found
+            HAL_SendIPPacket(dest_if, output, res, dest_mac);
           }
         }
         else
         {
           // not found
-          output[0] = 0x03;
-          // ICMP code
-          output[1] = 0x00;
-
-          setupICMPPacket(output, packet);
-
-          // calculate checksum
-          output[2] = 0x00;
-          output[3] = 0x00;
-          unsigned short answer = getCheckSum(output, 36);
-          output[2] = answer >> 8;
-          output[3] = answer;
-          HAL_SendIPPacket(if_index, output, 36, src_mac); // 36 is the length of a ICMP packet: 8(head of icmp) + 28(ip head + first 8 bytes of ip data)
-          printf("IP not found for %x\n", src_addr);
+          // 如果没查到下一跳的 MAC 地址，HAL 会自动发出 ARP 请求，在对方回复后，下次转发时就知道了
+          // you can drop it
+          printf("ARP not found for %x\n", nexthop);
         }
+      }
+      else
+      {
+        // not found
+        // 如果没查到目的地址的路由，返回一个 ICMP Destination Network Unreachable
+        // ICMP type
+        output[0] = 0x03;
+        // ICMP code
+        output[1] = 0x00;
+
+        setupICMPPacket(output, packet);
+
+        // calculate checksum
+        unsigned short answer = getCheckSum(output, 36);
+        output[2] = answer >> 8;
+        output[3] = answer;
+        HAL_SendIPPacket(if_index, output, 36, src_mac); // 36 is the length of a ICMP packet: 8(head of icmp) + 28(ip head + first 8 bytes of ip data)
+        printf("IP not found for %x\n", src_addr);
       }
     }
   }

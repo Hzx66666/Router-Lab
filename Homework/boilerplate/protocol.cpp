@@ -128,7 +128,25 @@ bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output)
  * 你写入 buffer 的数据长度和返回值都应该是四个字节的 RIP 头，加上每项 20 字节。
  * 需要注意一些没有保存在 RipPacket 结构体内的数据的填写。
  */
-uint32_t assemble(const RipPacket *rip, uint8_t *buffer, bool split, uint32_t dst_addr)
+uint32_t changeEndian_uint32t2(uint32_t value)
+{
+  char *ptr = (char *)(&value);
+  uint64_t base[4]; // 设置基
+  base[0] = 1;
+  for (int i = 1; i < 4; ++i)
+  {
+    base[i] = base[i - 1] * 256;
+  }
+
+  uint32_t res = 0;
+  for (int i = 0; i < sizeof(value); ++i)
+  {
+    res += uint8_t(ptr[i]) * base[4 - i - 1];
+  }
+
+  return res;
+}
+uint32_t assemble(const RipPacket *rip, uint8_t *buffer, uint32_t if_index)
 {
   // TODO:
   buffer[0] = rip->command;
@@ -140,10 +158,7 @@ uint32_t assemble(const RipPacket *rip, uint8_t *buffer, bool split, uint32_t ds
   {
     //水平分割
     RipEntry entry = rip->entries[i];
-    if (split && dst_addr == entry.nexthop)
-    {
-      continue;
-    }
+
     //family
     buffer[j] = 0x00;
     if (rip->command == 0x02)
@@ -159,7 +174,7 @@ uint32_t assemble(const RipPacket *rip, uint8_t *buffer, bool split, uint32_t ds
     buffer[j + 6] = entry.addr >> 16;
     buffer[j + 7] = entry.addr >> 24;
     //mask
-    printf("aa %d\n", entry.mask);
+
     buffer[j + 8] = entry.mask;
     buffer[j + 9] = entry.mask >> 8;
     buffer[j + 10] = entry.mask >> 16;
@@ -170,6 +185,10 @@ uint32_t assemble(const RipPacket *rip, uint8_t *buffer, bool split, uint32_t ds
     buffer[j + 14] = entry.nexthop >> 16;
     buffer[j + 15] = entry.nexthop >> 24;
     //metric
+    if (if_index == entry.if_index)
+    {
+      entry.metric = changeEndian_uint32t2(16);
+    }
     buffer[j + 16] = entry.metric;
     buffer[j + 17] = entry.metric >> 8;
     buffer[j + 18] = entry.metric >> 16;
