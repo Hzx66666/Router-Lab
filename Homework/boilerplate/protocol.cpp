@@ -185,7 +185,7 @@ uint32_t assemble(const RipPacket *rip, uint8_t *buffer, uint32_t if_index)
     buffer[j + 14] = entry.nexthop >> 16;
     buffer[j + 15] = entry.nexthop >> 24;
     //metric
-    if (if_index == entry.if_index)
+    if (if_index == entry.if_index&& entry.nexthop != 0)
     {
       entry.metric = changeEndian_uint32t2(16);
     }
