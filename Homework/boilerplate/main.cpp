@@ -96,8 +96,11 @@ uint32_t sendIPPacket(uint8_t output[2048], in_addr_t src_addr, in_addr_t dst_ad
   sendRip.numEntries = ripend - ripstart;
   for (int i = 0; i < sendRip.numEntries; i++)
   {
-    sendRip.entries[i] = ripTable.entries[ripstart + i];
-  }
+      sendRip.entries[i].addr = ripTable.entries[ripstart + i].addr;
+      sendRip.entries[i].mask = ripTable.entries[ripstart + i].mask;
+      sendRip.entries[i].metric = ripTable.entries[ripstart + i].metric;
+      sendRip.entries[i].nexthop = ripTable.entries[ripstart + i].nexthop;
+      sendRip.entries[i].if_index = ripTable.entries[ripstart + i].if_index;  }
   uint32_t rip_len = assemble(&sendRip, &output[20 + 8], if_index);
 
   // Total Length
