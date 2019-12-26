@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
-#include <algorithm>
 #include <iostream>
 using namespace std;
 
@@ -58,7 +57,7 @@ void mp(uint32_t dst_addr)
     uint8_t d = dst_addr >> 24;
     cout << (uint32_t)a << "." << (uint32_t)b << "." << (uint32_t)c << "." << (uint32_t)d;
 }
-uint32_t sendIPPacket(uint8_t output[2048], in_addr_t src_addr, in_addr_t dst_addr, int if_index, int ripstart, int ripend)
+uint32_t sendIPPacket(uint8_t output[2048], in_addr_t src_addr, in_addr_t dst_addr, int if_index)
 {
     // IP
     output[0] = 0x45;
@@ -91,14 +90,8 @@ uint32_t sendIPPacket(uint8_t output[2048], in_addr_t src_addr, in_addr_t dst_ad
     output[17] = dst_addr >> 8;
     output[18] = dst_addr >> 16;
     output[19] = dst_addr >> 24;
-    RipPacket sendRip;
-    sendRip.command = ripTable.command;
-    sendRip.numEntries = ripend - ripstart;
-    for (int i = 0; i < sendRip.numEntries; i++)
-    {
-        sendRip.entries[i] = ripTable.entries[ripstart + i];
-    }
-    uint32_t rip_len = assemble(&sendRip, &output[20 + 8], if_index);
+    
+    uint32_t rip_len = assemble(&ripTable, &output[20 + 8], if_index);
     
     // Total Length
     output[2] = (rip_len + 20 + 8) >> 8;
@@ -171,11 +164,15 @@ uint32_t toInt(uint32_t num)
     uint32_t ret = 32;
     for (uint32_t i = 0; i < 32; i++)
     {
-        if ((num & tmp) == 0x00000000)
+        if (num & tmp == 0)
         {
             ret--;
         }
-        num = num >> 1;
+        else
+        {
+            break;
+        }
+        num >> 1;
     }
     return ret;
 }
@@ -233,11 +230,8 @@ int main(int argc, char *argv[])
             for (int i = 0; i < N_IFACE_ON_BOARD; i++)
             {
                 updateRIPtable();
-                for (int i = 0; i * 25 < ripTable.numEntries; i++)
-                {
-                    uint32_t rip_len = sendIPPacket(output, addrs[i], multicast_addr, i, i * 25, min((i + 1) * 25, (int)ripTable.numEntries));
-                    HAL_SendIPPacket(i, output, rip_len + 20 + 8, multicast_mac);
-                }
+                uint32_t rip_len = sendIPPacket(output, addrs[i], multicast_addr, i);
+                HAL_SendIPPacket(i, output, rip_len + 20 + 8, multicast_mac);
             }
             printf("Timer\n");
             last_time = time;
@@ -330,16 +324,13 @@ int main(int argc, char *argv[])
                     
                     // TODO: fill resp
                     // assemble
-                    for (int i = 0; i * 25 < ripTable.numEntries; i++)
-                    {
-                        uint32_t rip_len = sendIPPacket(output, src_addr, dst_addr, if_index, i * 25, min((i + 1) * 25, (int)ripTable.numEntries));
-                        // ...
-                        // RIP
-                        // checksum calculation for ip and udp
-                        // if you don't want to calculate udp checksum, set it to zero
-                        // send it back
-                        HAL_SendIPPacket(if_index, output, rip_len + 20 + 8, src_mac);
-                    }
+                    uint32_t rip_len = sendIPPacket(output, src_addr, dst_addr, if_index);
+                    // ...
+                    // RIP
+                    // checksum calculation for ip and udp
+                    // if you don't want to calculate udp checksum, set it to zero
+                    // send it back
+                    HAL_SendIPPacket(if_index, output, rip_len + 20 + 8, src_mac);
                 }
                 else
                 { //3a.2
@@ -357,7 +348,7 @@ int main(int argc, char *argv[])
                     for (uint32_t i = 0; i < rip.numEntries; i++)
                     {
                         RipEntry entry = rip.entries[i];
-                        entry.metric = toInt(changeEndian_uint32t(entry.metric));
+                        entry.metric = changeEndian_uint32t(entry.metric);
                         
                         if (entry.metric + 1 > 16)
                         {
@@ -367,7 +358,7 @@ int main(int argc, char *argv[])
                                 //删除路由
                                 RoutingTableEntry router;
                                 router.addr = entry.addr;
-                                router.len = toInt(changeEndian_uint32t(entry.mask));
+                                router.len = toInt(entry.metric);
                                 router.nexthop = entry.nexthop;
                                 cout << "delete**********************************" << endl;
                                 mp(router.addr);
@@ -392,7 +383,7 @@ int main(int argc, char *argv[])
                                         find = true;
                                         RoutingTableEntry router;
                                         router.addr = entry.addr;
-                                        router.len = toInt(changeEndian_uint32t(entry.mask));
+                                        router.len = toInt(entry.metric);
                                         router.if_index = if_index;
                                         router.nexthop = src_addr;
                                         mp(router.addr);
@@ -411,7 +402,7 @@ int main(int argc, char *argv[])
                                 entry.metric++;
                                 RoutingTableEntry router;
                                 router.addr = entry.addr;
-                                router.len = toInt(changeEndian_uint32t(entry.mask));
+                                router.len = toInt(entry.metric);
                                 
                                 router.if_index = if_index;
                                 router.nexthop = src_addr;
@@ -522,4 +513,3 @@ int main(int argc, char *argv[])
     }
     return 0;
 }
-
